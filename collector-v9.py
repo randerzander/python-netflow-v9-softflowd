@@ -14,6 +14,7 @@ Licensed under MIT License. See LICENSE.
 import socket
 import struct
 import sys
+import os
 
 HOST = sys.argv[1]
 PORT = int(sys.argv[2])
@@ -273,21 +274,52 @@ class ExportPacket:
         return "<ExportPacket version {} counting {} records>".format(
             self.header.version, self.header.count)
 
+def process_v5(buf, count):
+    SIZE_OF_HEADER = 24
+    SIZE_OF_RECORD = 48
+    if count <= 0 or count >= 1000:
+      print "Invalid count %s" % count
+      return
+    for i in range(0, count):
+      try:
+        base = SIZE_OF_HEADER+(i*SIZE_OF_RECORD)
+        data = struct.unpack('!IIIIHH',buf[base+16:base+36])
+        nfdata = {
+          'saddr': socket.inet_ntoa(buf[base+0:base+4]),
+          'daddr': socket.inet_ntoa(buf[base+4:base+8]),
+          'proto': ord(buf[base+38])
+        }
+        for idx, field in enumerate(['pcount', 'bcount', 'stime', 'etime', 'sport', 'dport']):
+          nfdata[field] = data[idx]
+        print(str(nfdata))
+
+      except Exception,e:
+        print str(e)
+        continue
+
+def process_v9(data):
+    #print("Received data from {}, length {}".format(sender, len(data)))
+    print("Received data length {}".format(len(data)))
+
+    export = ExportPacket(data, _templates)
+    _templates.update(export.templates)
+
+    print("Processed ExportPacket with {} flows.".format(export.header.count))
 
 if __name__ == "__main__":
     # We need to save the templates our NetFlow device send over time. Templates
     # are not resended every time a flow is sent to the collector.
     _templates = {}
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((HOST, PORT))
+    #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    #sock.bind((HOST, PORT))
     print("Listening on interface {}:{}".format(HOST, PORT))
 
-    while 1:
-        (data, sender) = sock.recvfrom(8192)
-        print("Received data from {}, length {}".format(sender, len(data)))
-
-        export = ExportPacket(data, _templates)
-        _templates.update(export.templates)
-
-        print("Processed ExportPacket with {} flows.".format(export.header.count))
+    #while True:
+    for fn in os.listdir('/Users/randy/projects/TechOps/data/netflow'):
+      with open('/Users/randy/projects/TechOps/data/netflow/' + fn, 'r') as fp:
+        #(data, sender) = sock.recvfrom(8192)
+        data = fp.read(8192)
+        (version, count) = struct.unpack('!HH',data[0:4])
+        if version == 5: process_v5(data, count)
+        elif version == 9: process_v9(data)
